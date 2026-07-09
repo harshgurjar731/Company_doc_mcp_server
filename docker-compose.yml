@@ -1,0 +1,13 @@
+services:
+  mcp-server:
+    build: .
+    container_name: mcp_server
+    ports:
+      - "8000:8000"
+    volumes:
+      - mcp_data:/data
+    env_file:
+      - .env
+
+volumes:
+  mcp_data:

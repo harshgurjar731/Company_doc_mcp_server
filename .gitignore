@@ -1,0 +1,22 @@
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Database
+*.sqlite
+*.db
+
+# macOS
+.DS_Store
+
+# IDEs
+.vscode/
+.idea/

@@ -1,0 +1,5 @@
+mcp
+mistralai
+azure-storage-blob
+pymupdf
+requests
