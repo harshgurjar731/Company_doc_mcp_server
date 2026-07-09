@@ -14,7 +14,13 @@ init_db()
 import concurrent.futures
 
 # Initialize FastMCP Server
-mcp = FastMCP("Company Documents Server")
+from mcp.server.transport_security import TransportSecuritySettings
+
+mcp = FastMCP(
+    "Company Documents Server",
+    # Disable DNS rebinding protection to allow Railway's dynamic Host headers
+    transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False)
+)
 
 def _extract_text_with_fallback(client, document_url: str) -> str:
     """Try to extract text quickly using fitz (PyMuPDF), fallback to Mistral OCR on first 15 pages."""
@@ -320,9 +326,23 @@ if __name__ == "__main__":
     import os
     transport = os.environ.get("MCP_TRANSPORT", "stdio")
     if transport.lower() == "sse":
+        import uvicorn
+        from starlette.middleware.cors import CORSMiddleware
+        
+        # Get the underlying Starlette app from FastMCP
+        app = mcp.sse_app()
+        
+        # Add CORS middleware to allow cross-origin requests from the MCP Inspector
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=["*"],
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
+        
         # Configure FastMCP to bind to 0.0.0.0 and dynamic PORT for Docker/Railway networking
-        mcp.settings.host = "0.0.0.0"
-        mcp.settings.port = int(os.environ.get("PORT", 8000))
-        mcp.run(transport="sse")
+        port = int(os.environ.get("PORT", 8000))
+        uvicorn.run(app, host="0.0.0.0", port=port)
     else:
         mcp.run(transport="stdio")
