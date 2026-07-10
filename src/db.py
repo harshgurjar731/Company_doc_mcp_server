@@ -44,6 +44,19 @@ def init_db():
             )
         ''')
         
+        # Create company_details table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS company_details (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                company_id INTEGER UNIQUE NOT NULL,
+                industry TEXT,
+                geography TEXT,
+                segment TEXT,
+                kyc_status TEXT,
+                FOREIGN KEY (company_id) REFERENCES companies (id)
+            )
+        ''')
+        
         conn.commit()
 
 @contextmanager
@@ -219,3 +232,39 @@ def get_processing_status(company_name: str) -> dict:
             "failed": failed,
             "is_finished": processing == 0
         }
+
+def add_company_details(company_name: str, industry: str, geography: str, segment: str, kyc_status: str) -> bool:
+    """Add or update company details."""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('SELECT id FROM companies WHERE name = ?', (company_name,))
+        company = cursor.fetchone()
+        if not company:
+            raise ValueError(f"Company '{company_name}' not found. Please add the company first.")
+            
+        company_id = company['id']
+        
+        cursor.execute('''
+            INSERT INTO company_details (company_id, industry, geography, segment, kyc_status)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(company_id) DO UPDATE SET 
+                industry=excluded.industry,
+                geography=excluded.geography,
+                segment=excluded.segment,
+                kyc_status=excluded.kyc_status
+        ''', (company_id, industry, geography, segment, kyc_status))
+        conn.commit()
+        return True
+
+def get_company_details(company_name: str) -> dict | None:
+    """Get details for a specific company."""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT cd.industry, cd.geography, cd.segment, cd.kyc_status
+            FROM company_details cd
+            JOIN companies c ON cd.company_id = c.id
+            WHERE c.name = ?
+        ''', (company_name,))
+        row = cursor.fetchone()
+        return dict(row) if row else None

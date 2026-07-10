@@ -1,5 +1,5 @@
 from mcp.server.fastmcp import FastMCP
-from db import init_db, add_company, add_document, get_company_document_summaries, get_company_documents, delete_company, delete_document, update_company, update_document_metadata, get_document, list_all_companies, get_processing_status
+from db import init_db, add_company, add_document, get_company_document_summaries, get_company_documents, delete_company, delete_document, update_company, update_document_metadata, get_document, list_all_companies, get_processing_status, add_company_details, get_company_details
 import json
 import os
 import time
@@ -321,6 +321,27 @@ def modify_document(company_name: str, old_document_name: str, new_document_name
         return f"Failed to update document '{old_document_name}'."
     except Exception as e:
         return f"Error: {str(e)}"
+
+@mcp.tool()
+def insert_company_details(company_name: str, industry: str, geography: str, segment: str, kyc_status: str) -> str:
+    """Insert or update company details like industry, geography, segment, and kyc_status."""
+    try:
+        add_company_details(company_name, industry, geography, segment, kyc_status)
+        return f"Successfully updated details for company '{company_name}'."
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@mcp.tool()
+def retrieve_company_details(company_name: str) -> str:
+    """Retrieve details like industry, geography, segment, and kyc_status for a specific company."""
+    try:
+        details = get_company_details(company_name)
+        if not details:
+            return f"No details found for company '{company_name}'."
+        return json.dumps(details, indent=2)
+    except Exception as e:
+        return f"Error: {str(e)}"
+
 
 if __name__ == "__main__":
     import os
