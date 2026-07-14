@@ -347,11 +347,98 @@ if __name__ == "__main__":
     import os
     transport = os.environ.get("MCP_TRANSPORT", "stdio")
     if transport.lower() == "sse":
+        import asyncio
         import uvicorn
         from starlette.middleware.cors import CORSMiddleware
+        from starlette.middleware.base import BaseHTTPMiddleware
+        from starlette.requests import Request
+        from starlette.responses import StreamingResponse, Response
+        
+        # ── SSE Keepalive Middleware ─────────────────────────────────
+        # Railway kills idle HTTP connections after ~5 minutes.
+        # This middleware wraps SSE streaming responses with periodic
+        # `: keepalive\n\n` comment pings every 25 seconds to prevent
+        # the connection from going idle.
+        
+        KEEPALIVE_INTERVAL = int(os.environ.get("SSE_KEEPALIVE_SECONDS", "25"))
+        
+        class SSEKeepAliveMiddleware(BaseHTTPMiddleware):
+            async def dispatch(self, request: Request, call_next):
+                response = await call_next(request)
+                
+                # Only wrap SSE streaming responses (text/event-stream)
+                content_type = response.headers.get("content-type", "")
+                if "text/event-stream" not in content_type:
+                    return response
+                
+                # Wrap the original body iterator with keepalive pings
+                original_body = response.body_iterator
+                
+                async def keepalive_wrapper():
+                    """Interleave original SSE events with keepalive pings."""
+                    keepalive_bytes = f": keepalive\n\n".encode("utf-8")
+                    
+                    async def ping_generator():
+                        """Yield keepalive pings at regular intervals."""
+                        while True:
+                            await asyncio.sleep(KEEPALIVE_INTERVAL)
+                            yield keepalive_bytes
+                    
+                    # Use an asyncio.Queue to merge original events + pings
+                    queue = asyncio.Queue()
+                    sentinel = object()
+                    
+                    async def read_original():
+                        try:
+                            async for chunk in original_body:
+                                await queue.put(chunk)
+                        except Exception:
+                            pass
+                        finally:
+                            await queue.put(sentinel)
+                    
+                    async def send_pings():
+                        try:
+                            while True:
+                                await asyncio.sleep(KEEPALIVE_INTERVAL)
+                                await queue.put(keepalive_bytes)
+                        except asyncio.CancelledError:
+                            pass
+                    
+                    reader_task = asyncio.create_task(read_original())
+                    ping_task = asyncio.create_task(send_pings())
+                    
+                    try:
+                        while True:
+                            item = await queue.get()
+                            if item is sentinel:
+                                break
+                            yield item
+                    finally:
+                        ping_task.cancel()
+                        try:
+                            await ping_task
+                        except asyncio.CancelledError:
+                            pass
+                        if not reader_task.done():
+                            reader_task.cancel()
+                            try:
+                                await reader_task
+                            except asyncio.CancelledError:
+                                pass
+                
+                return StreamingResponse(
+                    keepalive_wrapper(),
+                    status_code=response.status_code,
+                    headers=dict(response.headers),
+                    media_type="text/event-stream",
+                )
         
         # Get the underlying Starlette app from FastMCP
         app = mcp.sse_app()
+        
+        # Add keepalive middleware (applied first, wraps SSE responses)
+        app.add_middleware(SSEKeepAliveMiddleware)
         
         # Add CORS middleware to allow cross-origin requests from the MCP Inspector
         app.add_middleware(
@@ -362,8 +449,20 @@ if __name__ == "__main__":
             allow_headers=["*"],
         )
         
+        # Health check endpoint for Railway
+        from starlette.routing import Route
+        
+        async def health_check(request):
+            return Response(
+                content=json.dumps({"status": "ok", "service": "Company Documents MCP Server"}),
+                media_type="application/json",
+            )
+        
+        app.routes.append(Route("/health", health_check))
+        
         # Configure FastMCP to bind to 0.0.0.0 and dynamic PORT for Docker/Railway networking
         port = int(os.environ.get("PORT", 8000))
+        print(f"Starting SSE server on 0.0.0.0:{port} with keepalive interval={KEEPALIVE_INTERVAL}s")
         uvicorn.run(app, host="0.0.0.0", port=port)
     else:
         mcp.run(transport="stdio")
